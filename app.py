@@ -38,14 +38,6 @@ def get_chat_interface(callback, placeholder) -> pn.chat.ChatInterface:
     )
 
 
-main_panel = pn.Column(
-    get_chat_interface(echo_callback, placeholder="Text to echo"),
-    pn.widgets.TextAreaInput(
-        placeholder="Buffer space", auto_grow=True, rows=1),
-    get_chat_interface(lambda contents, user, instance: hugchat_callback(contents, user, instance, hugchat_mixtral),
-                       placeholder="Text to Mixtral!")
-)
-
 mixtral_conversations = get_mixtral_conversations(hugchat_mixtral)
 hugchat_mixtral.current_conversation = None
 
@@ -55,15 +47,6 @@ for i, (conv_id, title) in enumerate(mixtral_conversations, 1):
     conv_id_str = str(conv_id)
     conversation_dict[conv_id_str] = conv_id
     conversation_selections[f"{i}. {title}"] = conv_id_str
-
-
-def configure_app(event):
-    selected_conversation = select_conversation.value
-    if selected_conversation == 'New':
-        hugchat_mixtral.new_conversation(switch_to=True)
-    else:
-        hugchat_mixtral.change_conversation(
-            conversation_dict[selected_conversation])
 
 
 select_conversation = pn.widgets.Select(
@@ -80,10 +63,30 @@ configuration_panel = pn.Column(
 )
 
 
-app = pn.Tabs(
-    ("Configuration", configuration_panel),
-    ("Main Screen", main_panel),
-)
+app = configuration_panel
+
+
+def configure_app(event):
+    selected_conversation = select_conversation.value
+    if selected_conversation == 'New':
+        hugchat_mixtral.new_conversation(switch_to=True)
+    else:
+        hugchat_mixtral.change_conversation(
+            conversation_dict[selected_conversation])
+
+    conversation = hugchat_mixtral.get_conversation_info()
+
+    main_panel = pn.Column(
+        get_chat_interface(echo_callback, placeholder="Text to echo"),
+        pn.widgets.TextAreaInput(
+            placeholder="Buffer space", auto_grow=True, rows=1),
+        f"Current conversation: {conversation.title}",
+        get_chat_interface(lambda contents, user, instance: hugchat_callback(contents, user, instance, hugchat_mixtral),
+                           placeholder="Text to Mixtral!")
+    )
+
+    app.clear()
+    app.append(main_panel)
 
 
 pn.bind(configure_app, configure_button, watch=True)
