@@ -1,16 +1,26 @@
 import panel as pn
+from claude_api import Client as ClaudeClient
 from hugchat import hugchat
-from mixtral import hugchat_model, get_hugchat_chatbot
+from claude import get_claude_client
+from mixtral import hugchat_model, get_hugchat_client
 
 pn.extension(design="material")
-hugchat_mixtral = get_hugchat_chatbot()
+anthropic_claude = get_claude_client()
+hugchat_mixtral = get_hugchat_client()
 
 
-def get_mixtral_conversations(chatbot):
+def get_claude_conversations(claude):
     conversations = []
-    for conv_id in chatbot.get_conversation_list():
-        chatbot.change_conversation(conv_id)
-        conversation = chatbot.get_conversation_info()
+    for conversation in claude.list_all_conversations():
+        conversations.append((conversation['uuid'], conversation['name']))
+    return reversed(conversations)
+
+
+def get_mixtral_conversations(mixtral):
+    conversations = []
+    for conv_id in mixtral.get_conversation_list():
+        mixtral.change_conversation(conv_id)
+        conversation = mixtral.get_conversation_info()
         if conversation.model == hugchat_model:
             conversations.append((conv_id, str(conversation.title)))
     return conversations
@@ -20,8 +30,13 @@ async def echo_callback(contents: str, user: str, instance: pn.chat.ChatInterfac
     return f"Echoing {user}: {contents}"
 
 
-async def hugchat_callback(contents: str, user: str, instance: pn.chat.ChatInterface, chatbot: hugchat.ChatBot) -> str:
-    query_result = chatbot.query(contents)
+async def anthropic_callback(contents: str, user: str, instance: pn.chat.ChatInterface, client: ClaudeClient, conversation_uuid: str) -> str:
+    query_result = client.send_message(contents, conversation_uuid)
+    return str(query_result)
+
+
+async def hugchat_callback(contents: str, user: str, instance: pn.chat.ChatInterface, client: hugchat.ChatBot) -> str:
+    query_result = client.query(contents)
     return str(query_result)
 
 
@@ -38,19 +53,30 @@ def get_chat_interface(callback, placeholder) -> pn.chat.ChatInterface:
     )
 
 
+claude_conversations = get_claude_conversations(anthropic_claude)
+anthropic_claude_current_conversation = None
 mixtral_conversations = get_mixtral_conversations(hugchat_mixtral)
 hugchat_mixtral.current_conversation = None
 
-conversation_selections = {'0. Start a new conversation': 'New'}
-conversation_dict = {}
+claude_conversation_selections = {'0. Start a new conversation': 'New'}
+for i, (conv_id, title) in enumerate(claude_conversations, 1):
+    claude_conversation_selections[f"{i}. {title}"] = conv_id
+
+mixtral_conversation_selections = {'0. Start a new conversation': 'New'}
+mixtral_conversation_dict = {}
 for i, (conv_id, title) in enumerate(mixtral_conversations, 1):
     conv_id_str = str(conv_id)
-    conversation_dict[conv_id_str] = conv_id
-    conversation_selections[f"{i}. {title}"] = conv_id_str
+    mixtral_conversation_dict[conv_id_str] = conv_id
+    mixtral_conversation_selections[f"{i}. {title}"] = conv_id_str
 
+select_claude_conversation = pn.widgets.Select(
+    options=claude_conversation_selections,
+    value=None,
+    name="Select a conversation"
+)
 
-select_conversation = pn.widgets.Select(
-    options=conversation_selections,
+select_mixtral_conversation = pn.widgets.Select(
+    options=mixtral_conversation_selections,
     value=None,
     name="Select a conversation"
 )
@@ -58,31 +84,62 @@ select_conversation = pn.widgets.Select(
 configure_button = pn.widgets.Button(name="Configure")
 
 configuration_panel = pn.Column(
-    select_conversation,
+    "Select Claude Conversation",
+    select_claude_conversation,
+    "Select Mixtral Conversation",
+    select_mixtral_conversation,
     configure_button
 )
-
 
 app = configuration_panel
 
 
 def configure_app(event):
-    selected_conversation = select_conversation.value
-    if selected_conversation == 'New':
+    selected_claude_conversation = select_claude_conversation.value
+    if selected_claude_conversation == 'New':
+        new_chat = anthropic_claude.create_new_chat()
+        anthropic_claude_current_conversation = new_chat['uuid']
+    else:
+        anthropic_claude_current_conversation = selected_claude_conversation
+
+    selected_mixtral_conversation = select_mixtral_conversation.value
+    if selected_mixtral_conversation == 'New':
         hugchat_mixtral.new_conversation(switch_to=True)
     else:
         hugchat_mixtral.change_conversation(
-            conversation_dict[selected_conversation])
+            mixtral_conversation_dict[selected_mixtral_conversation])
 
-    conversation = hugchat_mixtral.get_conversation_info()
+    mixtral_conversation = hugchat_mixtral.get_conversation_info()
+    mixtral_conversation_title = pn.pane.Markdown(
+        f"# Current Conversation: {mixtral_conversation.title}")
+
+    echo_chat = get_chat_interface(echo_callback, placeholder="Text to echo")
+
+    claude_chat = get_chat_interface(
+        lambda contents, user, instance: anthropic_callback(
+            contents, user, instance, anthropic_claude, anthropic_claude_current_conversation),
+        placeholder="Text to Claude!")
+
+    mixtral_chat = get_chat_interface(
+        lambda contents, user, instance: hugchat_callback(
+            contents, user, instance, hugchat_mixtral),
+        placeholder="Text to Mixtral!")
+
+    buffer = pn.widgets.TextAreaInput(
+        placeholder="Buffer space", auto_grow=True, rows=1)
+    copy_button = pn.widgets.Button(name='Copy to Buffer')
+    paste_button = pn.widgets.Button(name='Paste to Echo')
+    buffer_space = pn.Row(
+        buffer,
+        copy_button,
+        paste_button
+    )
 
     main_panel = pn.Column(
-        get_chat_interface(echo_callback, placeholder="Text to echo"),
-        pn.widgets.TextAreaInput(
-            placeholder="Buffer space", auto_grow=True, rows=1),
-        f"Current conversation: {conversation.title}",
-        get_chat_interface(lambda contents, user, instance: hugchat_callback(contents, user, instance, hugchat_mixtral),
-                           placeholder="Text to Mixtral!")
+        claude_chat,
+        buffer_space,
+        mixtral_conversation_title,
+        mixtral_chat
     )
 
     app.clear()

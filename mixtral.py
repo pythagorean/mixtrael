@@ -19,7 +19,7 @@ def hugchat_login() -> hugchat.RequestsCookieJar:
     return cookies
 
 
-def get_hugchat_chatbot() -> hugchat.ChatBot:
+def get_hugchat_client() -> hugchat.ChatBot:
     cookies = hugchat_login()
     chatbot = hugchat.ChatBot(cookies=cookies.get_dict())
     chatbot.delete_conversation()
