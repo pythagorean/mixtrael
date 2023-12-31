@@ -56,6 +56,7 @@ number_of_conversations = pn.widgets.IntSlider(
     name='Number of conversations', value=2, start=2, end=8)
 configure_button = pn.widgets.Button(name="Configure")
 
+
 start_panel = pn.Column(
     number_of_conversations,
     configure_button
@@ -84,7 +85,41 @@ def configure_client_panel(client_type, clients):
     ), conversation_dict
 
 
-def configured_start_panel(event):
+def create_configuration_panel_elements(clients, selected_conversations):
+    configuration_panel_elements = []
+    for i, client in enumerate(clients):
+        if client == 'Echo':
+            continue
+        select_info = selected_conversations[client]
+        configuration_panel_elements.extend(
+            [f"Conversation {i+1}", select_info['select']])
+    return configuration_panel_elements
+
+
+def configure_panel(event, selected_conversations, app):
+    app.clear()
+    for client_type, select_info in selected_conversations.items():
+        selected_conversation = select_info['select'].value
+        if selected_conversation == 'New':
+            if client_type == 'Claude':
+                new_chat = get_claude_client().create_new_chat()
+                current_conversation = new_chat['uuid']
+            elif client_type == 'Mixtral':
+                get_hugchat_client().new_conversation(switch_to=True)
+        else:
+            current_conversation = select_info['dict'][selected_conversation]
+
+        if client_type == 'Claude':
+            chat = get_chat_interface(lambda contents, user, instance: anthropic_callback(
+                contents, user, instance, get_claude_client(), current_conversation), placeholder="Text to Claude!")
+        elif client_type == 'Mixtral':
+            chat = get_chat_interface(lambda contents, user, instance: hugchat_callback(
+                contents, user, instance, get_hugchat_client()), placeholder="Text to Mixtral!")
+
+        app.append(chat)
+
+
+def configured_start_panel(event, number_of_conversations, configure_button, start_panel, app):
     num_conversations = number_of_conversations.value
     client_selection_configs = [create_client_selection_config(
         i) for i in range(1, num_conversations + 1)]
@@ -105,40 +140,13 @@ def configured_start_panel(event):
             selected_conversations[client_type] = {
                 'select': select_conversation, 'dict': conversation_dict}
 
-        configuration_panel_elements = []
-        for i, client in enumerate(clients):
-            if client == 'Echo':
-                continue
-            select_info = selected_conversations[client]
-            configuration_panel_elements.extend(
-                [f"Conversation {i+1}", select_info['select']])
-
+        configuration_panel_elements = create_configuration_panel_elements(
+            clients, selected_conversations)
         configuration_panel = pn.Column(
             *configuration_panel_elements, configure_button)
 
-        def configured_panel(event):
-            app.clear()
-            for client_type, select_info in selected_conversations.items():
-                selected_conversation = select_info['select'].value
-                if selected_conversation == 'New':
-                    if client_type == 'Claude':
-                        new_chat = get_claude_client().create_new_chat()
-                        current_conversation = new_chat['uuid']
-                    elif client_type == 'Mixtral':
-                        get_hugchat_client().new_conversation(switch_to=True)
-                else:
-                    current_conversation = select_info['dict'][selected_conversation]
-
-                if client_type == 'Claude':
-                    chat = get_chat_interface(lambda contents, user, instance: anthropic_callback(
-                        contents, user, instance, get_claude_client(), current_conversation), placeholder="Text to Claude!")
-                elif client_type == 'Mixtral':
-                    chat = get_chat_interface(lambda contents, user, instance: hugchat_callback(
-                        contents, user, instance, get_hugchat_client()), placeholder="Text to Mixtral!")
-
-                app.append(chat)
-
-        pn.bind(configured_panel, configure_button, watch=True)
+        pn.bind(lambda event: configure_panel(
+            event, selected_conversations, app), configure_button, watch=True)
         app.append(configuration_panel)
 
     app.clear()
@@ -146,6 +154,7 @@ def configured_start_panel(event):
     app.append(select_clients_panel)
 
 
-pn.bind(configured_start_panel, configure_button, watch=True)
 app = start_panel
+pn.bind(lambda event: configured_start_panel(
+    event, number_of_conversations, configure_button, start_panel, app), configure_button, watch=True)
 app.servable()
